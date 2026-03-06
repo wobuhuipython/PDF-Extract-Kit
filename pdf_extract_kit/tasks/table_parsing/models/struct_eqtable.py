@@ -14,7 +14,13 @@ class TableParsingStructEqTable:
         Args:
             config (dict): Configuration dictionary containing model parameters.
         """
-        assert torch.cuda.is_available(), "CUDA must be available for StructEqTable model."
+        # assert torch.cuda.is_available(), "CUDA must be available for StructEqTable model."
+        if not torch.cuda.is_available():
+            print("警告：CUDA不可用，正在使用CPU模式（速度可能较慢）")
+            # 可以选择将模型加载到CPU
+            self.device = torch.device('cpu')
+        else:
+            self.device = torch.device('cuda')
 
         self.model_dir = config.get('model_path', 'U4R/StructTable-InternVL2-1B')
         self.max_new_tokens = config.get('max_new_tokens', 1024)
