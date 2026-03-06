@@ -1,4 +1,4 @@
-"""
+    """
 数据导出模块 - 只导出到 NocoDB
 """
 
@@ -209,12 +209,13 @@ class DataExporter:
                         # 没有时间戳，认为锁无效，删除
                         self._delete_lock(lock_record.get('Id') or lock_record.get('id'))
             
-            # 2. 尝试插入新的锁记录
+            # 2. 尝试插入新的锁记录（适配结构体模式）
             lock_record = {
                 'source_file': lock_key,
                 'analysis_time': current_time,
-                'chart_title': '__PROCESSING_LOCK__',
-                'pdf_industry': 'LOCK'
+                'pdf_industry': '__LOCK__',
+                'total_charts': 0,
+                'charts_data': '[]'
             }
             
             response = requests.post(endpoint, headers=headers, json=[lock_record], timeout=10)
@@ -298,7 +299,7 @@ class DataExporter:
         timestamp: str = None,
         pdf_industry: str = "未知"
     ) -> Dict[str, Any]:
-        """导出到 NocoDB"""
+        """导出到 NocoDB - 一个PDF一条记录，图表数据以结构体形式保存"""
         print(f"\n📤 [调试] export_to_nocodb 被调用")
         print(f"   nocodb_enabled: {self.nocodb_enabled}")
         print(f"   images 数量: {len(images) if images else 0}")
@@ -315,23 +316,16 @@ class DataExporter:
         if timestamp is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        print(f"\n📤 开始导入到 NocoDB...")
+        print(f"\n📤 开始导入到 NocoDB（结构体模式）...")
         
-        # 准备数据
-        records = []
+        # 构建图表数据结构体列表
+        import json
+        
+        charts_data = []
         for img in images:
-            # 调试：检查原始数据
             analysis_value = img.get('analysis_cleaned', '')
-            print(f"  调试：准备记录 {img.get('image_filename', 'unknown')}")
-            print(f"        analysis_cleaned 长度: {len(analysis_value)}")
-            if not analysis_value:
-                print(f"        ⚠️  警告：analysis_cleaned 为空！")
-                print(f"        可用字段: {list(img.keys())}")
             
-            record = {
-                'source_file': source_file,
-                'analysis_time': timestamp,
-                'pdf_industry': pdf_industry,
+            chart_item = {
                 'chart_industry': img.get('chart_industry', pdf_industry or '其它'),
                 'content_category': img.get('content_category', ''),
                 'category_confidence': img.get('category_confidence', 0.0),
@@ -345,23 +339,35 @@ class DataExporter:
                 'image_url': img.get('image_url', ''),
                 'image_relative_path': img.get('image_relative_path', ''),
                 'chart_title': img.get('chart_title', ''),
-                'analysis_cleaned': analysis_value,  # 修改字段名匹配数据库
+                'analysis_cleaned': analysis_value,
                 'analysis_length': len(analysis_value),
                 'data_source': img.get('data_source', ''),
                 'keywords': img.get('keywords', ''),
             }
             
-            # 调试：检查 record
-            print(f"        record['analysis'] 长度: {len(record['analysis'])}")
-            
-            records.append(record)
+            charts_data.append(chart_item)
         
-        # 批量导入
+        # 构建一条PDF记录（包含所有图表的结构体数据）
+        record = {
+            'source_file': source_file,
+            'analysis_time': timestamp,
+            'pdf_industry': pdf_industry,
+            'total_charts': len(images),
+            'charts_data': json.dumps(charts_data, ensure_ascii=False),  # 所有图表数据的结构体
+        }
+        
+        print(f"  📊 PDF记录:")
+        print(f"     文件名: {source_file}")
+        print(f"     行业: {pdf_industry}")
+        print(f"     图表数: {len(images)}")
+        
+        # 导入单条记录
         try:
-            result = self._batch_insert_to_nocodb(records)
+            result = self._batch_insert_to_nocodb([record])
             
             if result['success']:
-                print(f"✅ 成功导入 {result['inserted_count']} 条记录到 NocoDB")
+                print(f"✅ 成功导入 PDF 记录到 NocoDB")
+                print(f"   - 1 条 PDF 记录（包含 {len(images)} 个图表数据）")
             else:
                 print(f"❌ NocoDB 导入失败: {result['message']}")
             
@@ -370,6 +376,8 @@ class DataExporter:
         except Exception as e:
             print(f"❌ NocoDB 导入异常: {e}")
             return {'success': False, 'message': str(e)}
+    
+
     
     def _batch_insert_to_nocodb(
         self,

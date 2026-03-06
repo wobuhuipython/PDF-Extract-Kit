@@ -42,6 +42,12 @@ class Config:
     EXTRACT_FULL_TEXT = os.getenv('EXTRACT_FULL_TEXT', 'true').lower() == 'true'
     MAX_TEXT_PAGES = int(os.getenv('MAX_TEXT_PAGES', '0'))  # 0 表示提取所有页
     
+    # OCR 过滤配置
+    ENABLE_OCR_FILTER = os.getenv('ENABLE_OCR_FILTER', 'true').lower() == 'true'
+    MIN_TEXT_LENGTH = int(os.getenv('MIN_TEXT_LENGTH', '5'))  # 最小文字长度
+    MIN_NUMBER_COUNT = int(os.getenv('MIN_NUMBER_COUNT', '3'))  # 最小数字数量
+    OCR_STRICT_MODE = os.getenv('OCR_STRICT_MODE', 'true').lower() == 'true'  # 严格模式
+    
     # 输出配置
     OUTPUT_DIR = os.getenv('OUTPUT_DIR', 'outputs/pdf_extract_ai')
     
@@ -62,4 +68,5 @@ class Config:
         print(f"最小置信度: {cls.MIN_CONFIDENCE}")
         print(f"标题距离: {cls.CAPTION_DISTANCE}")
         print(f"保存本地: {cls.SAVE_LOCAL_IMAGES}")
+        print(f"OCR 过滤: {cls.ENABLE_OCR_FILTER}")
         print("="*80)
