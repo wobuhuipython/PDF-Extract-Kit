@@ -3,6 +3,7 @@ PDF 处理器模块
 整合提取、分析、上传功能
 """
 import os
+import re
 import time
 from pathlib import Path
 from datetime import datetime
@@ -17,8 +18,59 @@ from .data_exporter import DataExporter
 from .image_filter import ImageFilter
 
 
+def sanitize_filename(filename: str) -> str:
+    """
+    清理文件名，移除特殊字符
+    保留：中文、英文字母、数字
+    删除：所有特殊符号和空格
+    
+    Args:
+        filename: 原始文件名
+        
+    Returns:
+        清理后的文件名
+    """
+    # 去掉文件扩展名
+    name_without_ext = Path(filename).stem
+    
+    # 只保留中文、英文字母、数字
+    # \u4e00-\u9fff 是中文字符范围
+    cleaned = re.sub(r'[^\u4e00-\u9fffa-zA-Z0-9]', '', name_without_ext)
+    
+    # 如果清理后为空，使用时间戳
+    if not cleaned:
+        cleaned = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    return cleaned
+
+
 class PDFProcessor:
     """PDF 处理器 - 完整流程"""
+    
+    class ProcessingLockContext:
+        """处理锁的上下文管理器"""
+        def __init__(self, data_exporter, pdf_name: str):
+            self.data_exporter = data_exporter
+            self.pdf_name = pdf_name
+            self.acquired = False
+            self.success = False
+        
+        def __enter__(self):
+            self.acquired = self.data_exporter.acquire_processing_lock(self.pdf_name)
+            return self
+        
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            if self.acquired:
+                if self.success:
+                    print(f"\n🔓 处理成功，释放锁...")
+                else:
+                    print(f"\n🔓 处理失败或未完成，释放锁以允许重试...")
+                self.data_exporter.release_processing_lock(self.pdf_name)
+            return False  # 不抑制异常
+        
+        def mark_success(self):
+            """标记处理成功"""
+            self.success = True
     
     def __init__(self, pdf_path: str, original_name: str = None):
         """
@@ -95,20 +147,19 @@ class PDFProcessor:
         print("🚀 开始处理")
         print("="*80)
         
-        # 0. 检查是否已处理 + 获取处理锁
-        if not self.data_exporter.acquire_processing_lock(self.pdf_name):
-            print(f"⏭️  跳过：{self.pdf_name} 已处理或正在处理中")
-            return {
-                'success': False,
-                'message': 'PDF 已处理或正在处理中',
-                'skipped': True
-            }
-        
-        # 使用 try-finally 确保锁一定会被释放
-        try:
+        # 使用上下文管理器自动管理锁
+        with self.ProcessingLockContext(self.data_exporter, self.pdf_name) as lock_ctx:
+            if not lock_ctx.acquired:
+                print(f"⏭️  跳过：{self.pdf_name} 已处理或正在处理中")
+                return {
+                    'success': False,
+                    'message': 'PDF 已处理或正在处理中',
+                    'skipped': True
+                }
+            
             start_time = time.time()
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
+            
             # 1. 提取图表
             print("\n步骤 1: 提取图表...")
             # 使用原始 PDF 文件名（不带扩展名）作为输出目录名
@@ -138,21 +189,21 @@ class PDFProcessor:
                     }
             else:
                 print("   ℹ️  OCR 过滤已禁用")
-        
+            
             # 2. AI 分析每个图表
             print("\n步骤 2: AI 分析图表...")
             analyzed_charts = []
-        
+            
             for idx, chart in enumerate(charts, 1):
                 print(f"\n[{idx}/{len(charts)}] 分析图表 {chart['filename']}...")
-            
+                
                 # 提取图表所在页面的上下文
                 page_context = self.text_extractor.extract_context_around_page(
                     self.pdf_path,
                     chart['page_num'],
                     context_pages=1
                 )
-            
+                
                 # 构建完整上下文
                 # 策略：使用 PDF 摘要（前2000字）+ 页面详细上下文
                 pdf_summary = self.pdf_full_text[:2000] if len(self.pdf_full_text) > 2000 else self.pdf_full_text
@@ -163,7 +214,7 @@ class PDFProcessor:
 图表所在页面及前后页内容（详细）：
 {page_context}
 """
-            
+                
                 # AI 分析（带上下文）
                 analysis_result = self.analyzer.analyze_chart(
                     chart['image_data'],
@@ -171,7 +222,7 @@ class PDFProcessor:
                     chart_type=chart['type'],
                     pdf_context=full_context
                 )
-            
+                
                 if analysis_result['success']:
                     title = analysis_result['chart_title']
                     analysis_text = analysis_result['analysis_cleaned']
@@ -231,15 +282,15 @@ class PDFProcessor:
                         'image_data': chart['image_data'],
                         'image_path': chart['image_path']
                     }
-
                     
                     analyzed_charts.append(chart_data)
-        
+            
             # 3. 上传到 OSS
             if self.oss_uploader.is_enabled():
                 print("\n步骤 3: 上传到 OSS...")
-                # 使用原始 PDF 文件名（不带扩展名）作为文件夹名
-                folder = Path(self.pdf_name).stem
+                # 清理文件名，移除特殊字符
+                folder = sanitize_filename(self.pdf_name)
+                print(f"   OSS 文件夹: {folder}")
                 
                 for chart in analyzed_charts:
                     url = self.oss_uploader.upload(
@@ -250,7 +301,7 @@ class PDFProcessor:
                     if url:
                         chart['image_url'] = url
                         print(f"  ✓ {chart['image_filename']}")
-        
+            
             # 4. 上传到 NocoDB
             print(f"\n步骤 4: 检查 NocoDB 上传...")
             print(f"   data_exporter.nocodb_enabled: {self.data_exporter.nocodb_enabled}")
@@ -273,11 +324,14 @@ class PDFProcessor:
                     print(f"  ✗ 上传失败: {result.get('message', '未知错误')}")
             else:
                 print("\n步骤 4: 跳过 NocoDB 上传（未启用）")
-        
+            
             # 5. 清理临时文件
             self.extractor.cleanup_temp_files(output_dir)
             
             elapsed_time = time.time() - start_time
+            
+            # 标记处理成功
+            lock_ctx.mark_success()
             
             print("\n" + "="*80)
             print("✅ 处理完成")
@@ -293,8 +347,3 @@ class PDFProcessor:
                 'elapsed_time': elapsed_time,
                 'timestamp': timestamp
             }
-        
-        finally:
-            # 6. 无论成功或失败，都释放处理锁
-            print(f"\n🔓 释放处理锁...")
-            self.data_exporter.release_processing_lock(self.pdf_name)

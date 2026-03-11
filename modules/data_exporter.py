@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+from contextlib import contextmanager
 
 
 class DataExporter:
@@ -49,9 +50,87 @@ class DataExporter:
         }
     
     def check_pdf_processed(self, source_file: str) -> bool:
-        """检查 PDF 是否已经处理过（查询数据库）"""
+        """
+        检查 PDF 是否已经处理过或正在处理中
+        
+        Returns:
+            True: 已处理或正在处理（应该跳过）
+            False: 未处理（可以处理）
+        """
         if not self.nocodb_enabled:
             print(f"   ℹ️  NocoDB 未启用，无法检查处理状态")
+            return False
+        
+        try:
+            api_url = self.nocodb_config['api_url'].rstrip('/')
+            api_token = self.nocodb_config['api_token']
+            table_id = self.nocodb_config['table_id']
+            
+            endpoint = f"{api_url}/api/v2/tables/{table_id}/records"
+            
+            headers = {
+                'xc-token': api_token,
+                'Content-Type': 'application/json'
+            }
+            
+            # 检查正常记录
+            params = {
+                'where': f'(source_file,eq,{source_file})',
+                'limit': 1
+            }
+            
+            print(f"   🔍 检查数据库: {source_file}")
+            
+            response = requests.get(
+                endpoint,
+                headers=headers,
+                params=params,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                records = data.get('list', []) or data.get('records', [])
+                
+                if len(records) > 0:
+                    print(f"   ✓ 数据库中已存在该文件的记录（已处理）")
+                    return True
+            
+            # 检查锁记录
+            lock_key = f"__LOCK__{source_file}"
+            params_lock = {
+                'where': f'(source_file,eq,{lock_key})',
+                'limit': 1
+            }
+            
+            response_lock = requests.get(
+                endpoint,
+                headers=headers,
+                params=params_lock,
+                timeout=10
+            )
+            
+            if response_lock.status_code == 200:
+                data_lock = response_lock.json()
+                lock_records = data_lock.get('list', []) or data_lock.get('records', [])
+                
+                if len(lock_records) > 0:
+                    print(f"   🔒 数据库中存在锁记录（正在处理中）")
+                    return True
+            
+            print(f"   ✓ 数据库中未找到该文件（可以处理）")
+            return False
+                
+        except Exception as e:
+            print(f"   ⚠️  数据库检查异常: {e}")
+            return False
+    
+    def _check_normal_record_exists(self, source_file: str) -> bool:
+        """
+        只检查正常记录（不检查锁记录）
+        用于 acquire_processing_lock 内部
+        """
+        if not self.nocodb_enabled:
             return False
         
         try:
@@ -71,8 +150,6 @@ class DataExporter:
                 'limit': 1
             }
             
-            print(f"   🔍 检查数据库: {source_file}")
-            
             response = requests.get(
                 endpoint,
                 headers=headers,
@@ -83,20 +160,11 @@ class DataExporter:
             if response.status_code == 200:
                 data = response.json()
                 records = data.get('list', []) or data.get('records', [])
-                exists = len(records) > 0
-                
-                if exists:
-                    print(f"   ✓ 数据库中已存在该文件的记录")
-                else:
-                    print(f"   ✓ 数据库中未找到该文件（可以处理）")
-                
-                return exists
-            else:
-                print(f"   ⚠️  数据库查询失败: HTTP {response.status_code}")
-                return False
+                return len(records) > 0
+            
+            return False
                 
         except Exception as e:
-            print(f"   ⚠️  数据库检查异常: {e}")
             return False
     
     def acquire_processing_lock(self, source_file: str, timeout: int = 1800) -> bool:
@@ -118,8 +186,8 @@ class DataExporter:
             from datetime import datetime, timedelta
             import time
             
-            # 【双重检查 1】先检查是否已处理完成（正常记录）
-            if self.check_pdf_processed(source_file):
+            # 【双重检查 1】先检查是否已处理完成（只检查正常记录，不检查锁）
+            if self._check_normal_record_exists(source_file):
                 print(f"   ✓ 文件已处理完成（跳过）: {source_file}")
                 return False
             
@@ -131,8 +199,25 @@ class DataExporter:
             success = self._try_insert_lock(lock_key, current_time, timeout)
             
             if not success:
-                print(f"   � 文件正在被理其他进程处理: {source_file}")
+                print(f"   ⏭️  文件正在被其他进程处理: {source_file}")
                 return False
+            
+            # 【双重检查 3】获取锁后再次检查是否已处理（只检查正常记录）
+            # 防止在获取锁的过程中，其他进程已经完成处理
+            time.sleep(0.1)  # 短暂等待，确保数据库同步
+            if self._check_normal_record_exists(source_file):
+                print(f"   ✓ 文件已被其他进程处理完成（释放锁）: {source_file}")
+                # 释放刚获取的锁
+                self.release_processing_lock(source_file)
+                return False
+            
+            print(f"   🔓 成功获取处理锁: {source_file}")
+            return True
+            
+        except Exception as e:
+            print(f"   ⚠️  锁获取异常: {e}")
+            # 异常时检查是否已处理，如果已处理就不允许，否则允许
+            return not self._check_normal_record_exists(source_file)
             
             # 【双重检查 3】获取锁后再次检查是否已处理
             # 防止在获取锁的过程中，其他进程已经完成处理
@@ -234,7 +319,7 @@ class DataExporter:
         """删除锁记录"""
         try:
             if not record_id:
-                return
+                return False
             
             api_url = self.nocodb_config['api_url'].rstrip('/')
             api_token = self.nocodb_config['api_token']
@@ -246,9 +331,15 @@ class DataExporter:
                 'Content-Type': 'application/json'
             }
             
-            requests.delete(f"{endpoint}/{record_id}", headers=headers, timeout=10)
-        except:
-            pass
+            # NocoDB 删除记录的格式：[{"Id": record_id}]
+            payload = [{"Id": record_id}]
+            response = requests.delete(endpoint, headers=headers, json=payload, timeout=10)
+            
+            return response.status_code in [200, 204]
+            
+        except Exception as e:
+            print(f"      ⚠️  删除锁记录异常: {e}")
+            return False
     
     def release_processing_lock(self, source_file: str):
         """
@@ -287,8 +378,14 @@ class DataExporter:
                 
                 if records:
                     record_id = records[0].get('Id') or records[0].get('id')
-                    self._delete_lock(record_id)
-                    print(f"   🔓 释放处理锁: {source_file}")
+                    if self._delete_lock(record_id):
+                        print(f"   🔓 释放处理锁: {source_file}")
+                    else:
+                        print(f"   ⚠️  释放锁失败: {source_file}")
+                else:
+                    print(f"   ℹ️  未找到锁记录: {source_file}")
+            else:
+                print(f"   ⚠️  查询锁记录失败: {response.status_code}")
         except Exception as e:
             print(f"   ⚠️  释放锁异常: {e}")
     
@@ -323,7 +420,7 @@ class DataExporter:
         
         charts_data = []
         for img in images:
-            analysis_value = img.get('analysis_cleaned', '')
+            analysis_value = img.get('analysis', '')
             
             chart_item = {
                 'chart_industry': img.get('chart_industry', pdf_industry or '其它'),
@@ -339,7 +436,7 @@ class DataExporter:
                 'image_url': img.get('image_url', ''),
                 'image_relative_path': img.get('image_relative_path', ''),
                 'chart_title': img.get('chart_title', ''),
-                'analysis_cleaned': analysis_value,
+                'analysis': analysis_value,
                 'analysis_length': len(analysis_value),
                 'data_source': img.get('data_source', ''),
                 'keywords': img.get('keywords', ''),

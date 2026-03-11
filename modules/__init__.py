@@ -10,6 +10,7 @@ from .oss_uploader import OSSUploader
 from .oss_downloader import OSSDownloader
 from .data_exporter import DataExporter
 from .pdf_processor import PDFProcessor
+from .nocodb_pdf_fetcher import NocoDBPDFFetcher
 
 __all__ = [
     'Config',
@@ -20,4 +21,5 @@ __all__ = [
     'OSSDownloader',
     'DataExporter',
     'PDFProcessor',
+    'NocoDBPDFFetcher',
 ]

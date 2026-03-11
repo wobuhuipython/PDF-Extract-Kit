@@ -103,12 +103,8 @@ class ImageFilter:
         分析文字内容，判断是否是有效的数据图表
         
         判断标准：
-        1. 文字长度 >= min_text_length
-        2. 包含足够的数字（图表通常有数据）
-        3. 不是纯 logo/装饰图
-        4. 不是示意图/概念图（如"特许4S店"、"体验店"等标签图）
-        5. 不是功能拆解图/流程图（如"Sale 整车销售"这种）
-        6. 不是实物照片（通常只有图号标题，无数据）
+        1. 保留：条形图、饼图、折线图、表格等数据图表
+        2. 过滤：产品图、示意图、概念图、流程图、技术图等
         
         Args:
             text: OCR 识别的文字
@@ -130,24 +126,36 @@ class ImageFilter:
         numbers = re.findall(r"\d+\.?\d*%?", text)
         number_count = len(numbers)
 
-        # 3. 检查是否包含数据相关的关键词
+        # 3. 检查是否包含数据相关的关键词（强数据特征）
+        strong_data_keywords = [
+            "%",
+            "占比",
+            "比例",
+            "增长率",
+            "同比",
+            "环比",
+            "亿元",
+            "万元",
+            "千元",
+            "百万",
+            "十亿",
+            "市场份额",
+            "销售额",
+            "营收",
+            "利润",
+            "增速",
+            "CAGR",
+            "YoY",
+            "QoQ",
+        ]
+        has_strong_data_keyword = any(keyword in text for keyword in strong_data_keywords)
+
+        # 4. 检查是否包含一般数据关键词
         data_keywords = [
             "数据",
             "统计",
             "分析",
-            "比例",
-            "占比",
-            "增长",
-            "下降",
             "趋势",
-            "%",
-            "亿",
-            "万",
-            "千",
-            "百",
-            "元",
-            "美元",
-            "人民币",
             "年",
             "月",
             "季度",
@@ -155,25 +163,98 @@ class ImageFilter:
             "Q2",
             "Q3",
             "Q4",
-            "data",
-            "statistics",
-            "analysis",
-            "growth",
-            "rate",
+            "2019",
+            "2020",
+            "2021",
+            "2022",
+            "2023",
+            "2024",
+            "2025",
         ]
         has_data_keyword = any(keyword in text for keyword in data_keywords)
 
-        # 4. 检查是否是装饰性/示意性图片的特征
-        # 这类图片通常只有简短的标签文字，没有数据
-        decorative_patterns = [
-            r"^[a-zA-Z]{1,15}$",  # 单个英文单词
-            r"^[\u4e00-\u9fa5]{1,8}$",  # 1-8个汉字（如"体验店"）
-            r"^[\u4e00-\u9fa5]{1,5}[a-zA-Z0-9]{1,5}[\u4e00-\u9fa5]{0,3}$",  # 如"特许4S店"
+        # 5. 检查是否是产品/技术展示图的特征词
+        product_keywords = [
+            "防水",
+            "防渗",
+            "保暖",
+            "透气",
+            "科技",
+            "技术",
+            "材料",
+            "面料",
+            "工艺",
+            "性能",
+            "功能",
+            "特性",
+            "优势",
+            "PROOF",
+            "SMART",
+            "ULTRA",
+            "PRO",
+            "PLUS",
+            "MAX",
+            "升级",
+            "吸汗",
+            "速干",
+            "排湿",
+            "红外",
+            "纤维",
+            "涂层",
+            "膜",
+            "层",
         ]
-        is_decorative = any(re.match(pattern, text.strip()) for pattern in decorative_patterns)
+        has_product_keyword = any(keyword in text for keyword in product_keywords)
 
-        # 5. 检查是否是示意图/概念图的常见词汇
-        # 这类图片通常是场景展示，不包含数据
+        # 6. 检查是否是技术示意图/对比图
+        technical_keywords = [
+            "对比",
+            "探针",
+            "测试",
+            "检测",
+            "PCB",
+            "ICT",
+            "电路",
+            "芯片",
+            "传感器",
+            "模块",
+            "接口",
+            "连接",
+            "尺寸",
+            "规格",
+            "参数",
+            "TOP",
+            "Bottom",
+            "PT1",
+            "PT2",
+            "Φ",  # 直径符号
+            "mm",
+            "cm",
+        ]
+        has_technical_keyword = any(keyword in text for keyword in technical_keywords)
+
+        # 7. 检查是否是界面/交互展示图
+        ui_keywords = [
+            "界面",
+            "交互",
+            "用户",
+            "UI",
+            "UX",
+            "命令行",
+            "图形",
+            "触摸",
+            "三维",
+            "虚拟",
+            "增强现实",
+            "AR",
+            "VR",
+            "显示",
+            "屏幕",
+            "操作",
+        ]
+        has_ui_keyword = any(keyword in text for keyword in ui_keywords)
+
+        # 8. 检查是否是概念图/场景图
         concept_keywords = [
             "店",
             "超市",
@@ -189,22 +270,21 @@ class ImageFilter:
             "模式",
             "场景",
             "网络",
+            "布局",
+            "规划",
             "store",
             "shop",
             "mall",
             "center",
-            "park",
         ]
         has_concept_keyword = any(keyword in text for keyword in concept_keywords)
 
-        # 6. 检查是否是功能拆解图/流程图
-        # 特征：包含多个"功能名称 + 说明"的组合，如"Sale 整车销售"
+        # 9. 检查是否是流程图/功能图
         function_keywords = [
-            "功能",
-            "拆解",
             "流程",
             "步骤",
             "环节",
+            "阶段",
             "服务",
             "销售",
             "供应",
@@ -214,14 +294,6 @@ class ImageFilter:
             "机器人",
             "机械臂",
             "设备",
-            "产品",
-            "材料",
-            "复合",
-            "表面",
-            "提供",
-            "应用",
-            "技术",
-            "系列",
             "Sale",
             "Service",
             "Supply",
@@ -229,17 +301,22 @@ class ImageFilter:
         ]
         has_function_keyword = any(keyword in text for keyword in function_keywords)
 
-        # 检查是否有"英文单词 + 中文解释"的模式（如"Sale 整车销售"）
+        # 10. 检查是否有"英文单词 + 中文解释"的模式（如"AT PROOF SMART 防渗水科技"）
         has_word_explanation_pattern = bool(
-            re.search(r"[A-Z][a-z]+\s*[\u4e00-\u9fa5]{2,6}", text)
+            re.search(r"[A-Z]{2,}\s*[A-Z]*\s*[\u4e00-\u9fa5]{2,8}", text)
         )
 
-        # 7. 检查是否是实物照片的标题
-        # 特征：以"图XX："开头，后面是简短描述，无数据
+        # 11. 检查是否是装饰性/标签图
+        decorative_patterns = [
+            r"^[a-zA-Z]{1,15}$",  # 单个英文单词
+            r"^[\u4e00-\u9fa5]{1,8}$",  # 1-8个汉字
+        ]
+        is_decorative = any(re.match(pattern, text.strip()) for pattern in decorative_patterns)
+
+        # 12. 检查是否是实物照片标题
         is_photo_title = bool(re.match(r"^图\d+[:：]", text))
 
-        # 8. 检查文字密度（示意图通常文字很少，分散在图片各处）
-        # 如果文字很少但分散成多个短词，可能是标签图
+        # 13. 检查文字密度
         words = text.split()
         avg_word_length = len(text) / max(len(words), 1)
         is_sparse_text = len(words) > 2 and avg_word_length < 5
@@ -250,42 +327,48 @@ class ImageFilter:
 
         if self.strict_mode:
             # 严格模式：必须明确是数据图表才保留
-            # 1. 必须有足够的数字
-            if number_count < self.min_number_count:
-                reason = f"数字不足({number_count}个，需要≥{self.min_number_count})"
-            # 2. 排除所有装饰性/示意性图片
+            
+            # 优先过滤：明确的非数据图表
+            if has_product_keyword and not has_strong_data_keyword:
+                reason = "产品功能展示图（非数据图表）"
+            elif has_technical_keyword and number_count < 5:
+                reason = "技术示意图/对比图（非数据图表）"
+            elif has_ui_keyword and not has_strong_data_keyword:
+                reason = "界面展示图（非数据图表）"
+            elif has_word_explanation_pattern and not has_strong_data_keyword:
+                reason = "产品/技术说明图（非数据图表）"
+            elif has_concept_keyword and number_count < 3:
+                reason = "概念图/场景图（非数据图表）"
+            elif has_function_keyword and number_count < 3:
+                reason = "流程图/功能图（非数据图表）"
             elif is_decorative:
                 reason = "装饰性图片/标签图"
             elif is_photo_title:
                 reason = "实物照片标题（非数据图表）"
-            elif has_word_explanation_pattern:
-                reason = "功能说明图/概念图"
-            elif has_function_keyword:
-                reason = "流程图/功能图"
-            elif has_concept_keyword:
-                reason = "示意图/场景图"
             elif is_sparse_text:
                 reason = "标签图（文字分散）"
-            # 3. 必须有数据关键词或足够多的数字
-            elif not has_data_keyword and number_count < self.min_number_count * 1.5:
-                reason = f"无数据关键词且数字较少({number_count}个)"
+            # 必须满足数据图表的条件
+            elif number_count < self.min_number_count:
+                reason = f"数字不足({number_count}个，需要≥{self.min_number_count})"
+            elif not has_data_keyword and not has_strong_data_keyword:
+                reason = "无数据关键词"
             else:
                 is_valid = True
                 reason = "有效数据图表"
         else:
             # 宽松模式：只过滤明显无效的图片
-            if is_decorative:
-                reason = "装饰性图片/标签图"
+            if has_product_keyword and number_count < 2:
+                reason = "产品展示图（无数据）"
+            elif has_technical_keyword and number_count < 3:
+                reason = "技术示意图（数据不足）"
+            elif has_ui_keyword and number_count < 2:
+                reason = "界面展示图（无数据）"
+            elif has_word_explanation_pattern and number_count < 2:
+                reason = "说明图（数据不足）"
+            elif is_decorative:
+                reason = "装饰性图片"
             elif is_photo_title and number_count < 2:
                 reason = "实物照片（无数据）"
-            elif has_word_explanation_pattern and number_count < 3:
-                reason = "功能拆解图/概念图"
-            elif has_function_keyword and has_word_explanation_pattern:
-                reason = "流程图/功能说明图"
-            elif has_concept_keyword and number_count < 2:
-                reason = "示意图/概念图（无数据）"
-            elif is_sparse_text and number_count < 2:
-                reason = "标签图（文字分散且无数据）"
             elif number_count < self.min_number_count and not has_data_keyword:
                 reason = f"数字太少({number_count}个)且无数据关键词"
             else:
@@ -297,7 +380,11 @@ class ImageFilter:
             "reason": reason,
             "text_length": text_length,
             "number_count": number_count,
+            "has_strong_data_keyword": has_strong_data_keyword,
             "has_data_keyword": has_data_keyword,
+            "has_product_keyword": has_product_keyword,
+            "has_technical_keyword": has_technical_keyword,
+            "has_ui_keyword": has_ui_keyword,
             "has_concept_keyword": has_concept_keyword,
             "has_function_keyword": has_function_keyword,
             "is_decorative": is_decorative,
