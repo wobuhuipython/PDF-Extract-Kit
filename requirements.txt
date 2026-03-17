@@ -2,10 +2,14 @@ omegaconf
 matplotlib
 PyMuPDF
 ultralytics>=8.2.85
-doclayout-yolo==0.0.2
+doclayout-yolo==0.0.2b1
 unimernet==0.2.1
 paddlepaddle-gpu
 paddleocr==2.7.3
 struct-eqtable
 lmdeploy
 oss2
+torch==2.1.2
+torchvision==0.16.2
+torchaudio==2.1.2
+torchtext==0.16.0

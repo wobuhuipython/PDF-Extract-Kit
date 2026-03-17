@@ -31,7 +31,7 @@ class Config:
     
     # PDF-Extract-Kit 模型配置
     LAYOUT_MODEL_PATH = os.getenv('LAYOUT_MODEL_PATH', 
-        '/home/root123/文档/liang/PDF-Extract-Kit/models/opendatalab/pdf-extract-kit-1/models/Layout/YOLO/doclayout_yolo_ft.pt')
+        'E:\PDF_analyze\PDF-Extract-Kit\models\opendatalab\pdf-extract-kit-1\models\Layout\YOLO\doclayout_yolo_ft.pt')
     
     # 提取配置
     MIN_CONFIDENCE = float(os.getenv('MIN_CONFIDENCE', '0.5'))

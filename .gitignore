@@ -6,6 +6,7 @@ outputs/*
 data/*
 temp*
 test*
+pdf_cache/*
 
 # python
 .ipynb_checkpoints
@@ -15,8 +16,9 @@ test*
 # logs
 *.log
 *.out
-
+*.env
 models/*
 
 # Sphinx documentation
 docs/*/_build/
+.env

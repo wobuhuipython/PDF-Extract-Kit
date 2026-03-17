@@ -9,10 +9,64 @@ from PIL import Image
 
 from paddleocr import PaddleOCR
 from ppocr.utils.logging import get_logger
-from ppocr.utils.utility import check_and_read, alpha_to_color, binarize_img
+from ppocr.utils.utility import check_and_read
 from tools.infer.utility import draw_ocr_box_txt, get_rotate_crop_image, get_minarea_rect_crop
 from pdf_extract_kit.registry import MODEL_REGISTRY
 logger = get_logger()
+
+
+def alpha_to_color(img, alpha_color=(255, 255, 255)):
+    """
+    将带有透明通道的图片转换为指定背景色
+    
+    Args:
+        img: 输入图片（numpy array）
+        alpha_color: 背景色 RGB 元组，默认白色
+        
+    Returns:
+        转换后的图片
+    """
+    if len(img.shape) == 3 and img.shape[2] == 4:
+        # 图片有 alpha 通道
+        B, G, R, A = cv2.split(img)
+        alpha = A / 255.0
+        
+        # 创建背景色
+        R = (alpha * R + (1 - alpha) * alpha_color[2]).astype(np.uint8)
+        G = (alpha * G + (1 - alpha) * alpha_color[1]).astype(np.uint8)
+        B = (alpha * B + (1 - alpha) * alpha_color[0]).astype(np.uint8)
+        
+        return cv2.merge([B, G, R])
+    else:
+        return img
+
+
+def binarize_img(img):
+    """
+    将图片二值化（转换为黑白图）
+    
+    Args:
+        img: 输入图片（numpy array）
+        
+    Returns:
+        二值化后的图片
+    """
+    if len(img.shape) == 3:
+        # 转换为灰度图
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = img
+    
+    # 使用自适应阈值进行二值化
+    binary = cv2.adaptiveThreshold(
+        gray, 255, 
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+        cv2.THRESH_BINARY, 
+        11, 2
+    )
+    
+    # 转回 BGR 格式
+    return cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
 
 def img_decode(content: bytes):
     np_arr = np.frombuffer(content, dtype=np.uint8)
